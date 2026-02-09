@@ -15,6 +15,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  #v5.0.0
@@ -29,7 +31,6 @@ jobs:
           git config --global user.name 'MidnightCI'
           git config --global user.email 'midnight-automation+midnightci@iohk.io'
 
-          BRANCH=${{ github.event.inputs.branch || github.ref_name }}
           NEW_BRANCH=doc-generation
 
           git checkout -B $NEW_BRANCH
@@ -46,13 +47,15 @@ jobs:
   create-pr:
     runs-on: ubuntu-latest
     needs: build
+    env:
+      BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+      GH_PASSWORD: ${{ secrets.GH_PASSWORD }}
     steps:
       - name: Check if PR already exists
         id: check-pr
         run: |
-          BRANCH=${{ github.event.inputs.branch || github.ref_name }}
           API_URL="https://api.github.com/repos/${{ github.repository }}/pulls"
-          PR_EXISTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PASSWORD }}" "$API_URL?head=doc-generation&base=$BRANCH" | jq 'length')
+          PR_EXISTS=$(curl -s -H "Authorization: token $GH_PASSWORD" "$API_URL?head=doc-generation&base=$BRANCH" | jq 'length')
           if [[ "$PR_EXISTS" -eq "0" ]]; then
             echo "create_pr=true" >> $GITHUB_ENV
           fi
@@ -60,12 +63,11 @@ jobs:
       - name: Create PR via GitHub API
         if: env.create_pr == 'true'
         run: |
-          BRANCH=${{ github.event.inputs.branch || github.ref_name }}
           PR_TITLE="Automated Documentation Update"
           PR_BODY="This PR contains the latest generated markdown documentation."
           API_URL="https://api.github.com/repos/${{ github.repository }}/pulls"
 
           curl -X POST "$API_URL" \
-            -H "Authorization: token ${{ secrets.GH_PASSWORD }}" \
+            -H "Authorization: token $GH_PASSWORD" \
             -H "Accept: application/vnd.github.v3+json" \
             -d "{\"title\": \"$PR_TITLE\", \"body\": \"$PR_BODY\", \"head\": \"doc-generation\", \"base\": \"$BRANCH\"}"
