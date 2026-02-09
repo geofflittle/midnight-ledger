@@ -61,7 +61,7 @@ jobs:
             accept-flake-config = true
 
       - name: Cache Nix
-        uses: input-output-hk/actions/attic@latest
+        uses: input-output-hk/actions/attic@dae79c1a5e60c97d75a8a7099d8ddb51aa9cdff0 # latest
         with:
           nix_path: nixpkgs=channel:nixos-unstable
           endpoint: https://attic.ci.iog.io
@@ -85,4 +85,3 @@ jobs:
         run: |
           nix develop . --command generate-cost-model/build-docker.sh
           docker push ghcr.io/midnight-ntwrk/generate-ledger-cost-model:latest
-
