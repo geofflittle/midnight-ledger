@@ -434,3 +434,113 @@ fn construct_apply_result(
     res.push(&JsValue::from(indicies_res));
     Ok(res.into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ZswapChainState;
+    use crate::conversions::to_hex_ser;
+    use coin_structure::coin::{Info as CoinInfo, ShieldedTokenType};
+    use coin_structure::contract::ContractAddress;
+    use rand::rngs::OsRng;
+    use rand::Rng;
+    use zswap::{Offer, Output as ZswapOutput};
+
+    /// Build a ZswapChainState that has interleaved outputs from two contracts,
+    /// returning `(chain_state, tracked_addr_hex)`.
+    fn build_interleaved_state() -> (ZswapChainState, String) {
+        let mut rng = rand::thread_rng();
+        let tracked = ContractAddress(OsRng.r#gen());
+        let other = ContractAddress(OsRng.r#gen());
+        let mut chain_state = ZswapChainState::new();
+
+        // Insert interleaved outputs: other, tracked, other, tracked
+        // This gives us 4 outputs at indices 0..3
+        for &addr in &[other, tracked, other, tracked] {
+            let coin = CoinInfo {
+                nonce: OsRng.r#gen(),
+                type_: ShieldedTokenType(OsRng.r#gen()),
+                value: OsRng.r#gen(),
+            };
+            let output = ZswapOutput::new_contract_owned(&mut rng, &coin, None, addr).unwrap();
+            let offer = Offer {
+                inputs: vec![].into(),
+                outputs: vec![output].into(),
+                transient: vec![].into(),
+                deltas: vec![].into(),
+            };
+            chain_state = ZswapChainState(
+                chain_state.0.try_apply(&offer, None).unwrap().0,
+            );
+        }
+
+        // Finalize the block so past_roots is populated
+        chain_state = ZswapChainState(chain_state.0.post_block_update(Default::default()));
+        let tracked_hex = to_hex_ser(&tracked).unwrap();
+        (chain_state, tracked_hex)
+    }
+
+    /// Calls the real `ZswapChainState::filter()` and verifies that `first_free`
+    /// is preserved from the original state.
+    ///
+    /// **Expected to FAIL** until the bug is fixed:
+    ///   assertion failed: `(left == right)`
+    ///     left: `0`
+    ///     right: `4`
+    #[test]
+    fn filter_preserves_first_free() {
+        let (chain_state, tracked_hex) = build_interleaved_state();
+        let original_first_free = chain_state.first_free();
+        assert!(original_first_free > 0, "precondition: state has outputs");
+
+        let filtered = chain_state.filter(&tracked_hex).unwrap();
+
+        assert_eq!(
+            filtered.first_free(), original_first_free,
+            "filter() must preserve first_free from the original state; \
+             bug: State::new() resets it to 0"
+        );
+    }
+
+    /// Calls the real `ZswapChainState::filter()` then `try_apply` on the result.
+    /// The bug causes `apply_output` to call `update_hash(first_free=0, ...)`
+    /// which panics on the collapsed Merkle tree node at index 0.
+    ///
+    /// **Expected to FAIL** (panic) until the bug is fixed:
+    ///   "Attempted to insert into collapsed portion of Merkle tree!"
+    #[test]
+    fn try_apply_succeeds_on_filtered_state() {
+        let (chain_state, tracked_hex) = build_interleaved_state();
+        let tracked: ContractAddress = crate::conversions::from_hex_ser(&tracked_hex).unwrap();
+        let filtered = chain_state.filter(&tracked_hex).unwrap();
+
+        // Build a new output-only offer to apply on the filtered state
+        let mut rng = rand::thread_rng();
+        let coin = CoinInfo {
+            nonce: OsRng.r#gen(),
+            type_: ShieldedTokenType(OsRng.r#gen()),
+            value: OsRng.r#gen(),
+        };
+        let output = ZswapOutput::new_contract_owned(&mut rng, &coin, None, tracked).unwrap();
+        let offer = Offer {
+            inputs: vec![].into(),
+            outputs: vec![output].into(),
+            transient: vec![].into(),
+            deltas: vec![].into(),
+        };
+
+        // catch_unwind so the test runner reports failure, not abort
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            filtered.0.try_apply(&offer, None)
+        }));
+
+        assert!(
+            result.is_ok(),
+            "try_apply panicked on filtered state — filter() bug: \
+             first_free=0 causes update_hash to hit collapsed node"
+        );
+        assert!(
+            result.unwrap().is_ok(),
+            "try_apply returned Err on filtered state"
+        );
+    }
+}
