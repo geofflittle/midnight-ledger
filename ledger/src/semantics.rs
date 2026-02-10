@@ -444,7 +444,7 @@ impl<D: DB> LedgerState<D> {
         }
     }
 
-    fn check_night_balance_invariant(&self) -> Result<(), InvariantViolation> {
+    pub fn check_night_balance_invariant(&self) -> Result<(), InvariantViolation> {
         let utxo_ann = self.utxo.utxos.ann();
         let treasury_night = self
             .treasury

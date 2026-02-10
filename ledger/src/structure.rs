@@ -17,6 +17,7 @@ use crate::dust::DUST_SPEND_PIS;
 use crate::dust::DUST_SPEND_PROOF_SIZE;
 use crate::dust::{DustActions, DustParameters, DustState, INITIAL_DUST_PARAMETERS};
 use crate::error::FeeCalculationError;
+use crate::error::InvariantViolation;
 use crate::error::MalformedTransaction;
 use crate::verify::ProofVerificationMode;
 use base_crypto::BinaryHashRepr;
@@ -3017,6 +3018,44 @@ impl<D: DB> LedgerState<D> {
         }
     }
 
+    /// Constructs a new ledger state with given genesis parameterisation.
+    ///
+    /// From the ledger's perspective, this includes the network ID, initial parameters, as well as
+    /// three system-controlled pools:
+    /// - The locked pool, which represents funds locked on Midnight due to being circulating as
+    ///   cNIGHT on Cardano
+    /// - The reserve pool, which represents funds set aside as a reward for rewarding protocol
+    ///   participation
+    /// - The treasury pool (also referred to as the Illiquid Circulation Supply, or ICS), which
+    ///   holds funds to be controlled by governance for strategic use
+    pub fn with_genesis_settings(
+        network_id: impl Into<String>,
+        parameters: LedgerParameters,
+        locked_pool: u128,
+        reserve_pool: u128,
+        treasury: u128,
+    ) -> Result<Self, InvariantViolation> {
+        let result = LedgerState {
+            network_id: network_id.into(),
+            parameters: Sp::new(parameters),
+            locked_pool,
+            bridge_receiving: Map::new(),
+            reserve_pool,
+            treasury: [(TokenType::Unshielded(NIGHT), treasury)]
+                .into_iter()
+                .collect(),
+            block_reward_pool: 0,
+            unclaimed_block_rewards: Map::new(),
+            zswap: Sp::new(zswap::ledger::State::new()),
+            contract: Map::new(),
+            utxo: Sp::new(UtxoState::default()),
+            replay_protection: Sp::new(ReplayProtectionState::default()),
+            dust: Sp::new(DustState::default()),
+        };
+        result.check_night_balance_invariant()?;
+        Ok(result)
+    }
+
     pub fn state_hash(&self) -> ArenaHash<D::Hasher> {
         Sp::new(self.clone()).hash()
     }
@@ -3080,6 +3119,40 @@ mod tests {
         let adj = f64::from(INITIAL_PARAMETERS.max_price_adjustment());
         assert!(1.045 <= adj);
         assert!(adj <= 1.047);
+    }
+
+    #[test]
+    fn test_genesis_state() {
+        assert_eq!(
+            LedgerState::<InMemoryDB>::with_genesis_settings(
+                "local-test",
+                INITIAL_PARAMETERS,
+                10_000_000_000_000_000,
+                10_000_000_000_000_000,
+                10_000_000_000_000_000,
+            ),
+            Err(InvariantViolation::NightBalance(30_000_000_000_000_000))
+        );
+        assert_eq!(
+            LedgerState::<InMemoryDB>::with_genesis_settings(
+                "local-test",
+                INITIAL_PARAMETERS,
+                1_000_000_000_000_000,
+                1_000_000_000_000_000,
+                1_000_000_000_000_000,
+            ),
+            Err(InvariantViolation::NightBalance(3_000_000_000_000_000))
+        );
+        assert!(
+            LedgerState::<InMemoryDB>::with_genesis_settings(
+                "local-test",
+                INITIAL_PARAMETERS,
+                10_000_000_000_000_000,
+                10_000_000_000_000_000,
+                4_000_000_000_000_000,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
