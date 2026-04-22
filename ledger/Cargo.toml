@@ -62,6 +62,7 @@ proptest-derive = { version = "0.8", optional = true }
 midnight-ledger = { path = ".", features = ["test-utilities", "proptest", "fixed-point-custom-serde"] }
 onchain-vm = { path = "../onchain-vm", package = "midnight-onchain-vm" }
 storage = { path = "../storage", package = "midnight-storage", features = ["parity-db"] }
+serialize = { path = "../serialize", package = "midnight-serialize" }
 storage-core = { path = "../storage-core", package = "midnight-storage-core", features = ["test-utilities", "layout-v2", "gc-v1"] }
 tokio = { version = "^1.46.1", features = ["rt", "rt-multi-thread", "macros"] }
 criterion = { version = "^0.5.1" }
